@@ -152,7 +152,7 @@ function updateSelectedDate() {
     const isoDate = new Date(selectedYear, monthNum - 1, selectedDay);
     const isoString = isoDate.toISOString().split('T')[0];
     
-    // Display both formats (using safe DOM manipulation to avoid XSS)
+    // Display both formats (replaced innerHTML with DOM manipulation to prevent XSS from user-controlled date values)
     display.textContent = '';  // Clear existing content
     const dateText = document.createTextNode(formattedDate);
     const lineBreak = document.createElement('br');
