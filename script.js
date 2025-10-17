@@ -152,8 +152,14 @@ function updateSelectedDate() {
     const isoDate = new Date(selectedYear, monthNum - 1, selectedDay);
     const isoString = isoDate.toISOString().split('T')[0];
     
-    // Display both formats (using innerHTML for proper line break)
-    display.innerHTML = `${formattedDate}<br>(${isoString})`;
+    // Display both formats (using safe DOM manipulation to avoid XSS)
+    display.textContent = '';  // Clear existing content
+    const dateText = document.createTextNode(formattedDate);
+    const lineBreak = document.createElement('br');
+    const isoText = document.createTextNode(`(${isoString})`);
+    display.appendChild(dateText);
+    display.appendChild(lineBreak);
+    display.appendChild(isoText);
     display.style.color = '#764ba2';
 }
 
