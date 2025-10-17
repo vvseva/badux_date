@@ -83,6 +83,7 @@ h1 {
     height: 25px;
     border-radius: 50%;
     background: #667eea;
+    border: none;
     cursor: pointer;
 }
 

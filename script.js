@@ -1,6 +1,8 @@
 // BadUX Date Picker - Deliberately confusing but functional!
 
 // Month mapping - intentionally out of order for "bad UX"
+// The keys are random numbers to make the dropdown options appear in a confusing order
+// This is a deliberate design choice for the "badux.lol" competition
 const monthMap = {
     '13': 'January',
     '7': 'February',
@@ -147,12 +149,12 @@ function updateSelectedDate() {
     
     // Format the date
     const formattedDate = `${selectedMonth} ${selectedDay}, ${selectedYear}`;
-    display.textContent = formattedDate;
-    display.style.color = '#764ba2';
-    
-    // Also show ISO format
     const isoDate = new Date(selectedYear, monthNum - 1, selectedDay);
-    display.textContent += `\n(${isoDate.toISOString().split('T')[0]})`;
+    const isoString = isoDate.toISOString().split('T')[0];
+    
+    // Display both formats (using innerHTML for proper line break)
+    display.innerHTML = `${formattedDate}<br>(${isoString})`;
+    display.style.color = '#764ba2';
 }
 
 // Initialize when DOM is ready
