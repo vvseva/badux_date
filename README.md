@@ -6,6 +6,8 @@ A tiny Svelte + Vite + D3 demo. The time advances in real-time.
 You can wait till it displays the desired date and enjoy the music.
 Fast forwarding and going back in time is in beta.
 
+![](demo.gif)
+
 ## Run locally
 
 0. Git clone.
