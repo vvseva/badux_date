@@ -1,32 +1,18 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import d3Background from './d3Background.js';
+  import music from './music.js';
 
-  // Canvases / SVG
-  let canvas, gridCanvas, svg;
-  let ctx, gridCtx;
-
-  // Dimensions
+  let canvas;
   let width = 0, height = 0;
 
   // Time state
-  let displayed = new Date(0); // start at Unix epoch
-  let speed = 1; // seconds per real-time second; negative = backwards
+  let displayed = new Date(0);
+  let speed = 1;
   let running = true;
   let lastTick = performance.now();
   let rafId;
-
-  // Track last whole minute for D3 background updates
   let lastMin = 0;
-
-  // Tile strip buffer (existing canvas visualization)
-  const pxPerSecond = 1;
-  const bufferHeight = 100;
-  const bufferWidth = 6000; // wide enough to tile smoothly
-  const tileAlpha = 0.6;
-  let bufferCanvas, bufferCtx;
-  let writeX = 0; // next x to write in buffer
-  let pending = 0; // carry fractional seconds between frames
 
   // Audio
   let audioCtx;
@@ -87,62 +73,29 @@
     return Math.max(0, Math.floor(displayed.getTime() / 60000));
   }
 
+  const MAX_SPEED = 10000;
+  let lastUpdateTime = 0; // throttle D3 updates to ~60Hz
+
   function tick(now) {
     const dt = (now - lastTick) / 1000;
     lastTick = now;
 
     if (running) {
       displayed = new Date(displayed.getTime() + dt * speed * 1000);
-      drawTiles(dt * Math.abs(speed));
     }
 
-    // Update D3 tiles on whole-minute changes
-    const min = currentMinute();
-    if (min !== lastMin) {
-      lastMin = min;
-      d3Background.updateTiles(min);
+    // Throttle visual updates to ~60Hz
+    if (now - lastUpdateTime > 1000 / 60) {
+      lastUpdateTime = now;
+      const min = currentMinute();
+      if (min !== lastMin) {
+        // If many minutes were skipped due to high speed, jump directly to final state
+        lastMin = min;
+        d3Background.updateTiles(min);
+      }
     }
 
-    render();
     rafId = requestAnimationFrame(tick);
-  }
-
-  function drawTiles(seconds) {
-    pending += seconds;
-    const n = Math.floor(pending);
-    if (n <= 0) return;
-    pending -= n;
-
-    for (let i = 0; i < n; i++) {
-      // color by time, purely decorative
-      const hue = (displayed.getTime() / 1000) % 360;
-      bufferCtx.fillStyle = `hsla(${hue},60%,60%,${tileAlpha})`;
-      bufferCtx.fillRect(writeX, 0, pxPerSecond, bufferHeight);
-      writeX = (writeX + pxPerSecond) % bufferWidth;
-    }
-  }
-
-  function render() {
-    if (!ctx) return;
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-    // center the tile strip vertically
-    const y = Math.floor((ctx.canvas.height - bufferHeight) / 2);
-    let x = -(writeX % bufferWidth);
-    while (x < ctx.canvas.width) {
-      ctx.drawImage(
-        bufferCanvas,
-        0,
-        0,
-        bufferWidth,
-        bufferHeight,
-        x,
-        y,
-        bufferWidth,
-        bufferHeight
-      );
-      x += bufferWidth;
-    }
   }
 
   // Button bump (shake) effect
@@ -152,93 +105,91 @@
     void el.offsetWidth; // reflow to restart
     el.classList.add('bump');
     setTimeout(() => el.classList.remove('bump'), 250);
+    // kick off background music on first interaction
+    music.start(getAudio);
   }
 
   // Controls
   function toggleSelect(e) {
     bumpButton(e);
-    if (running) {
-      running = false;
-      d3Background.shake(10000); // 10s shake
-      d3Background.fireworks();
-      playExplosion();
-    } else {
-      running = true;
-    }
+    // Do not pause; just trigger effects and let user continue
+    d3Background.shake(10000);
+    d3Background.fireworks();
+    playExplosion();
+    showSelectedPopup();
   }
   function goBack(e) {
     bumpButton(e);
     const prevMag = Math.abs(speed);
-    if (speed >= 0) speed = -1; else speed = speed * 10;
+    if (speed >= 0) speed = -1; else speed = Math.max(-MAX_SPEED, speed * 10);
     if (Math.abs(speed) > prevMag) playSwoosh();
     running = true;
   }
   function goForward(e) {
     bumpButton(e);
     const prevMag = Math.abs(speed);
-    if (speed <= 0) speed = 1; else speed = speed * 10;
+    if (speed <= 0) speed = 1; else speed = Math.min(MAX_SPEED, speed * 10);
     if (Math.abs(speed) > prevMag) playSwoosh();
     running = true;
   }
 
-  // Derived labels for speed indicators
-  $: speedMag = Math.max(1, Math.abs(Math.round(speed)));
+  // Derived labels for speed indicators (show capped value)
+  $: speedMag = Math.max(1, Math.min(MAX_SPEED, Math.abs(Math.round(speed))));
   $: backFactor = speed < 0 ? speedMag : 1;
   $: forwardFactor = speed > 0 ? speedMag : 1;
 
+  let resizeTO;
+  let toastMsg = '';
+  function showSelectedPopup() {
+    toastMsg = `Selected: ${f.y}-${f.mo}-${f.day} ${f.hh}:${f.mm}:${f.ss} UTC`;
+  }
+  function closeToast() {
+    toastMsg = '';
+  }
+  function handleResize() {
+    clearTimeout(resizeTO);
+    resizeTO = setTimeout(() => {
+      const w = Math.max(640, Math.min(1600, window.innerWidth - 40));
+      const h = Math.max(360, Math.min(1000, window.innerHeight - 120));
+      width = w; height = h;
+      d3Background.init(canvas, width, height);
+      lastMin = currentMinute();
+      d3Background.updateTiles(lastMin);
+    }, 150);
+  }
+
   onMount(() => {
-    // size canvases
-    const w = Math.max(640, Math.min(1600, window.innerWidth - 40));
-    const h = Math.max(360, Math.min(1000, window.innerHeight - 120));
-    width = w; height = h;
+    width = Math.max(640, Math.min(1600, window.innerWidth - 40));
+    height = Math.max(360, Math.min(1000, window.innerHeight - 120));
 
-    ctx = canvas.getContext('2d');
-    ctx.canvas.width = width;
-    ctx.canvas.height = height;
-
-    gridCtx = gridCanvas.getContext('2d');
-    gridCtx.canvas.width = width;
-    gridCtx.canvas.height = height;
-
-    // draw subtle grid once
-    gridCtx.clearRect(0, 0, width, height);
-    gridCtx.save();
-    gridCtx.globalAlpha = 0.06; // invisible-ish grid
-    gridCtx.strokeStyle = '#000';
-    gridCtx.lineWidth = 1;
-    for (let gx = 0; gx < width; gx += 50) {
-      gridCtx.beginPath();
-      gridCtx.moveTo(gx + 0.5, 0);
-      gridCtx.lineTo(gx + 0.5, height);
-      gridCtx.stroke();
-    }
-    for (let gy = 0; gy < height; gy += 50) {
-      gridCtx.beginPath();
-      gridCtx.moveTo(0, gy + 0.5);
-      gridCtx.lineTo(width, gy + 0.5);
-      gridCtx.stroke();
-    }
-    gridCtx.restore();
-
-    // prepare tile buffer (canvas strip)
-    bufferCanvas = document.createElement('canvas');
-    bufferCanvas.width = bufferWidth;
-    bufferCanvas.height = bufferHeight;
-    bufferCtx = bufferCanvas.getContext('2d');
-    bufferCtx.clearRect(0, 0, bufferWidth, bufferHeight);
-
-    // init D3 SVG background
-    d3Background.init(svg, width, height);
+    d3Background.init(canvas, width, height);
     lastMin = currentMinute();
     d3Background.updateTiles(lastMin);
 
+    window.addEventListener('resize', handleResize);
+
     lastTick = performance.now();
     rafId = requestAnimationFrame(tick);
+
+    // Start elevator music immediately on load (attempt resume if needed)
+    music.start(getAudio);
   });
+
+  // As an extra guard, also attempt start on DOM ready in case onMount timing varies
+  if (typeof window !== 'undefined') {
+    const onReady = () => music.start(getAudio);
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      onReady();
+    } else {
+      window.addEventListener('DOMContentLoaded', onReady, { once: true });
+    }
+  }
 
   onDestroy(() => {
     cancelAnimationFrame(rafId);
+    window.removeEventListener('resize', handleResize);
     d3Background.destroy();
+    music.stop();
   });
 </script>
 
@@ -258,13 +209,13 @@
     justify-content: center;
     overflow: hidden;
   }
-  svg, canvas {
+  canvas {
     position: absolute;
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
+    pointer-events: none;
   }
-  svg { pointer-events: none; }
   .ui {
     position: absolute;
     left: 50%;
@@ -298,6 +249,55 @@
     gap: 12px;
     pointer-events: auto;
   }
+  .volbar {
+    position: fixed;
+    right: 14px;
+    top: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: rgba(0,0,0,0.35);
+    padding: 8px 10px;
+    border-radius: 10px;
+    pointer-events: auto;
+    font-size: 12px;
+    opacity: 0.9;
+  }
+  .volbar input[type="range"] {
+    appearance: none;
+    width: 120px;
+    height: 6px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 3px;
+  }
+  .volbar input[type="range"]::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; cursor: pointer; }
+  .volbar input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; cursor: pointer; }
+  .toast {
+    position: fixed;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: auto;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    z-index: 10;
+  }
+  .toast button {
+    background: transparent;
+    border: 0;
+    color: #fff;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+  }
   button {
     padding: 10px 16px;
     border-radius: 10px;
@@ -317,15 +317,21 @@
     100% { transform: translateX(0); }
   }
   :global(button.bump) { animation: btn-shake 0.25s linear; }
+  .footer {
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    opacity: 0.75;
+    pointer-events: auto;
+  }
+  .footer a { color: #9ee6b2; text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
 </style>
 
 <div class="container">
-  <!-- D3 SVG background (behind canvases) -->
-  <svg bind:this={svg}></svg>
-
-  <!-- Existing canvases -->
   <canvas bind:this={canvas}></canvas>
-  <canvas bind:this={gridCanvas} style="pointer-events: none; opacity: 0.6;"></canvas>
 
   <div class="ui">
     <div class="label">Select your date of birth</div>
@@ -336,8 +342,24 @@
 
     <div class="controls">
       <button on:click={goBack}>◀ Back ×{backFactor}</button>
-      <button on:click={toggleSelect}>{running ? 'Select Date' : '▶ Continue selecting'}</button>
+      <button on:click={toggleSelect}>Select Date</button>
       <button on:click={goForward}>▶ Forward ×{forwardFactor}</button>
     </div>
+  </div>
+
+  <div class="volbar" aria-label="Music volume">
+    <span>Music</span>
+    <input type="range" min="0" max="1" step="0.01" value="0.06" on:input={(e)=> music.setVolume(parseFloat(e.currentTarget.value))} />
+  </div>
+
+  {#if toastMsg}
+    <div class="toast" role="status" aria-live="polite">
+      <span>{toastMsg}</span>
+      <button aria-label="Close" on:click={closeToast}>×</button>
+    </div>
+  {/if}
+
+  <div class="footer">
+    <a href="https://github.com/vvseva/badux_date" target="_blank" rel="noopener noreferrer">GitHub: vvseva/badux_date</a>
   </div>
 </div>
